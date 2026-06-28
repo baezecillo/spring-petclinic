@@ -1,0 +1,103 @@
+---
+# deploy.yml — Deploy Spring PetClinic to the production VM
+# Called by Jenkins after a successful build.
+
+- name: Deploy Spring PetClinic to Production
+  hosts: production
+  become: yes          # sudo on the remote host
+  vars:
+    app_name: spring-petclinic
+    app_jar_src: /tmp/spring-petclinic.jar    # SCP'd there by Jenkinsfile
+    app_jar_dest: "{{ app_dir }}/spring-petclinic.jar"
+    app_service: petclinic
+    java_package: openjdk-17-jre-headless
+
+  tasks:
+
+    # ── 1. Ensure Java is present ───────────────────────────────────────────
+    - name: Install Java 17 JRE
+      apt:
+        name: "{{ java_package }}"
+        state: present
+        update_cache: yes
+
+    # ── 2. Create a dedicated system user for the app ───────────────────────
+    - name: Create petclinic system user
+      user:
+        name: "{{ app_user }}"
+        system: yes
+        shell: /usr/sbin/nologin
+        home: "{{ app_dir }}"
+        create_home: yes
+
+    # ── 3. Create app directory ──────────────────────────────────────────────
+    - name: Ensure app directory exists
+      file:
+        path: "{{ app_dir }}"
+        state: directory
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: '0755'
+
+    # ── 4. Copy the JAR ──────────────────────────────────────────────────────
+    - name: Copy JAR to app directory
+      copy:
+        src: "{{ app_jar_src }}"
+        dest: "{{ app_jar_dest }}"
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: '0644'
+        remote_src: yes    # File is already on the remote host (SCP'd by Jenkins)
+
+    # ── 5. Install systemd service unit ─────────────────────────────────────
+    - name: Install petclinic systemd service
+      copy:
+        dest: /etc/systemd/system/petclinic.service
+        content: |
+          [Unit]
+          Description=Spring PetClinic Application
+          After=network.target
+
+          [Service]
+          User={{ app_user }}
+          WorkingDirectory={{ app_dir }}
+          ExecStart=/usr/bin/java -jar {{ app_jar_dest }} --server.port={{ app_port }}
+          Restart=on-failure
+          RestartSec=10
+          StandardOutput=journal
+          StandardError=journal
+          SyslogIdentifier=petclinic
+
+          [Install]
+          WantedBy=multi-user.target
+        mode: '0644'
+
+    # ── 6. Reload systemd, enable and restart the service ───────────────────
+    - name: Reload systemd daemon
+      systemd:
+        daemon_reload: yes
+
+    - name: Enable and restart petclinic service
+      systemd:
+        name: "{{ app_service }}"
+        state: restarted
+        enabled: yes
+
+    # ── 7. Wait for the app to come up ───────────────────────────────────────
+    - name: Wait for application to be ready
+      uri:
+        url: "http://localhost:{{ app_port }}/actuator/health"
+        method: GET
+        status_code: 200
+        return_content: yes
+      register: health_check
+      until: health_check.status == 200
+      retries: 12
+      delay: 10
+
+    # ── 8. Print deployment summary ──────────────────────────────────────────
+    - name: Deployment complete
+      debug:
+        msg: >
+          ✅ Spring PetClinic build #{{ build_number }} deployed successfully.
+          Access it at http://{{ ansible_host }}:{{ app_port }}
