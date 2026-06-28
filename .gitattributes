@@ -1,6 +1,18 @@
-/mvnw           text eol=lf
-*.cmd           text eol=crlf
+# Normalize all text files to LF in the repo
+* text=auto
+
+# Pipeline and config files must always be LF (run on Linux)
+Jenkinsfile     text eol=lf
+Dockerfile      text eol=lf
+*.yml           text eol=lf
+*.yaml          text eol=lf
+*.ini           text eol=lf
+*.sh            text eol=lf
+/gradlew        text eol=lf
+
+# Java source files
 *.java          text eol=lf
 
-/gradlew        text eol=lf
+# Windows-specific scripts keep CRLF
+*.cmd           text eol=crlf
 *.bat           text eol=crlf
